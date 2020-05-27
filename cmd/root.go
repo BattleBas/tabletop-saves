@@ -14,8 +14,6 @@ var rootCmd = &cobra.Command{
 	Short: "Tabletop Simulator backups your game to a zip file",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		// Do Stuff Here
-		fmt.Println(args[0])
 		err := tts.Backup(args[0])
 		if err != nil {
 			fmt.Println(err)

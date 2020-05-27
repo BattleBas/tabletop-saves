@@ -1,5 +1,5 @@
-# tabletop-saves
+# Tabletop Simulator Saves
 
 ![alt text](logo.png "Title")
 
-A tool to pre-fetch, backup and restore Tabletop Simulator save files
+A WIP tool to pre-fetch, backup and restore Tabletop Simulator save files

@@ -2,13 +2,12 @@ package tts
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"os/user"
-	"path"
+	"regexp"
 	"strings"
 )
 
@@ -50,8 +49,7 @@ func Backup(filename string) error {
 		return err
 	}
 
-	fmt.Println(s.SaveName)
-	fmt.Println(s.TableURL)
+	err = downloadModels(s, dirs["Models"])
 
 	return nil
 }
@@ -74,27 +72,82 @@ func createDirectories(gameName string) (map[string]string, error) {
 		return map[string]string{}, err
 	}
 
+	dirs["Models"] = dirs["Root"] + "/" + "Models"
+
+	err = os.Mkdir(dirs["Models"], 0777)
+	if err != nil {
+		return map[string]string{}, err
+	}
+
 	return dirs, nil
 }
 
-func downloadImages(s SaveFile, dir string) error {
+func downloadImages(s SaveFile, rootDir string) error {
 
-	urls := []string{
-		s.BackURL,
-		s.DiffuseURL,
-		s.FaceURL,
-		s.ImageURL,
-		s.NormalURL,
-		s.SkyURL,
-		s.TableURL,
+	urls := map[string]bool{}
+
+	if s.TableURL != "" {
+		urls[s.TableURL] = true
 	}
 
-	for _, u := range urls {
-		if u == "" {
-			continue
+	if s.SkyURL != "" {
+		urls[s.SkyURL] = true
+	}
+
+	for _, o := range s.ObjectStates {
+		if o.CustomImage.ImageURL != "" {
+			urls[o.CustomImage.ImageURL] = true
 		}
-		p := path.Base(u)
-		err := downloadFile(u, dir+"/"+p)
+		if o.CustomMesh.DiffuseURL != "" {
+			urls[o.CustomMesh.DiffuseURL] = true
+		}
+		if o.CustomMesh.NormalURL != "" {
+			urls[o.CustomMesh.NormalURL] = true
+		}
+		for _, d := range o.CustomDeck {
+			if d.FaceURL != "" {
+				urls[d.FaceURL] = true
+			}
+			if d.BackURL != "" {
+				urls[d.BackURL] = true
+			}
+		}
+	}
+
+	downloadURLs(urls, rootDir)
+
+	return nil
+}
+
+func downloadModels(s SaveFile, rootDir string) error {
+
+	urls := map[string]bool{}
+
+	for _, o := range s.ObjectStates {
+		if o.CustomMesh.MeshURL != "" {
+			urls[o.CustomMesh.MeshURL] = true
+		}
+		if o.CustomMesh.ColliderURL != "" {
+			urls[o.CustomMesh.ColliderURL] = true
+		}
+	}
+
+	downloadURLs(urls, rootDir)
+
+	return nil
+
+}
+
+func downloadURLs(urls map[string]bool, rootDir string) error {
+	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
+	if err != nil {
+		return err
+	}
+
+	for k := range urls {
+		filename := reg.ReplaceAllString(k, "")
+
+		err := downloadFile(k, rootDir+"/"+filename)
 		if err != nil {
 			return err
 		}
@@ -103,13 +156,12 @@ func downloadImages(s SaveFile, dir string) error {
 	return nil
 }
 
-func downloadFile(url string, file string) error {
+func downloadFile(url string, filename string) error {
 
-	out, err := os.Create(file)
+	out, err := os.Create(filename)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -122,5 +174,39 @@ func downloadFile(url string, file string) error {
 		return err
 	}
 
+	out.Seek(0, 0)
+
+	fileType, err := getFileContentType(out)
+	if err != nil {
+		return err
+	}
+
+	out.Close()
+
+	if fileType == "image/png" {
+		err := os.Rename(filename, filename+".png")
+		if err != nil {
+			return err
+		}
+	} else if fileType == "image/jpeg" {
+		err := os.Rename(filename, filename+".jpg")
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+func getFileContentType(out *os.File) (string, error) {
+	buffer := make([]byte, 512)
+
+	_, err := out.Read(buffer)
+	if err != nil {
+		return "", err
+	}
+
+	contentType := http.DetectContentType(buffer)
+
+	return contentType, nil
 }
