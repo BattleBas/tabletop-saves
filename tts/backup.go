@@ -193,6 +193,11 @@ func downloadFile(url string, filename string) error {
 		if err != nil {
 			return err
 		}
+	} else if fileType == "text/plain; charset=utf-8" {
+		err := os.Rename(filename, filename+".obj")
+		if err != nil {
+			return nil
+		}
 	}
 
 	return nil
