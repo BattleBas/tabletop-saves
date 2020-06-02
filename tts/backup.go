@@ -1,8 +1,8 @@
 package tts
 
 import (
+	"archive/zip"
 	"encoding/json"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -15,74 +15,58 @@ import (
 // saving all dependencies to a zip
 func Backup(filename string) error {
 
-	usr, err := user.Current()
+	s, err := readSaveFile(filename)
+
+	z, err := os.Create(strings.Replace(s.SaveName, " ", "", -1) + ".zip")
 	if err != nil {
 		return err
+	}
+	defer z.Close()
+
+	zipWriter := zip.NewWriter(z)
+	defer zipWriter.Close()
+
+	err = downloadImages(s, "Image", zipWriter)
+	if err != nil {
+		return err
+	}
+
+	err = downloadModels(s, "Models", zipWriter)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func readSaveFile(filename string) (SaveFile, error) {
+	usr, err := user.Current()
+	if err != nil {
+		return SaveFile{}, err
 	}
 	dir := usr.HomeDir
 	windowsPath := "\\Documents\\My Games\\Tabletop Simulator\\Mods\\Workshop\\"
 
 	f, err := os.Open(dir + windowsPath + filename)
 	if err != nil {
-		return err
+		return SaveFile{}, err
 	}
 	defer f.Close()
 
 	b, err := ioutil.ReadAll(f)
 	if err != nil {
-		return err
+		return SaveFile{}, err
 	}
 
 	var s SaveFile
 	err = json.Unmarshal(b, &s)
 	if err != nil {
-		return err
+		return SaveFile{}, err
 	}
 
-	dirs, err := createDirectories(s.SaveName)
-	if err != nil {
-		return nil
-	}
-
-	err = downloadImages(s, dirs["Images"])
-	if err != nil {
-		return err
-	}
-
-	err = downloadModels(s, dirs["Models"])
-
-	return nil
+	return s, nil
 }
 
-func createDirectories(gameName string) (map[string]string, error) {
-
-	dirs := map[string]string{}
-
-	dirs["Root"] = strings.Replace(gameName, " ", "", -1)
-
-	err := os.Mkdir(dirs["Root"], 0777)
-	if err != nil {
-		return map[string]string{}, err
-	}
-
-	dirs["Images"] = dirs["Root"] + "/" + "Image"
-
-	err = os.Mkdir(dirs["Images"], 0777)
-	if err != nil {
-		return map[string]string{}, err
-	}
-
-	dirs["Models"] = dirs["Root"] + "/" + "Models"
-
-	err = os.Mkdir(dirs["Models"], 0777)
-	if err != nil {
-		return map[string]string{}, err
-	}
-
-	return dirs, nil
-}
-
-func downloadImages(s SaveFile, rootDir string) error {
+func downloadImages(s SaveFile, rootDir string, zipWriter *zip.Writer) error {
 
 	urls := map[string]bool{}
 
@@ -114,12 +98,12 @@ func downloadImages(s SaveFile, rootDir string) error {
 		}
 	}
 
-	downloadURLs(urls, rootDir)
+	downloadURLs(urls, rootDir, zipWriter)
 
 	return nil
 }
 
-func downloadModels(s SaveFile, rootDir string) error {
+func downloadModels(s SaveFile, rootDir string, zipWriter *zip.Writer) error {
 
 	urls := map[string]bool{}
 
@@ -132,13 +116,13 @@ func downloadModels(s SaveFile, rootDir string) error {
 		}
 	}
 
-	downloadURLs(urls, rootDir)
+	downloadURLs(urls, rootDir, zipWriter)
 
 	return nil
 
 }
 
-func downloadURLs(urls map[string]bool, rootDir string) error {
+func downloadURLs(urls map[string]bool, rootDir string, zipWriter *zip.Writer) error {
 	reg, err := regexp.Compile("[^a-zA-Z0-9]+")
 	if err != nil {
 		return err
@@ -147,7 +131,7 @@ func downloadURLs(urls map[string]bool, rootDir string) error {
 	for k := range urls {
 		filename := reg.ReplaceAllString(k, "")
 
-		err := downloadFile(k, rootDir+"/"+filename)
+		err := downloadFile(k, rootDir+"/"+filename, zipWriter)
 		if err != nil {
 			return err
 		}
@@ -156,12 +140,7 @@ func downloadURLs(urls map[string]bool, rootDir string) error {
 	return nil
 }
 
-func downloadFile(url string, filename string) error {
-
-	out, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
+func downloadFile(url string, filename string, zipWriter *zip.Writer) error {
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -169,49 +148,30 @@ func downloadFile(url string, filename string) error {
 	}
 	defer resp.Body.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	b, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	out.Seek(0, 0)
+	contentType := http.DetectContentType(b)
 
-	fileType, err := getFileContentType(out)
+	if contentType == "image/png" {
+		filename += ".png"
+	} else if contentType == "image/jpeg" {
+		filename += ".jpg"
+	} else if contentType == "text/plain; charset=utf-8" {
+		filename += ".obj"
+	}
+
+	f, err := zipWriter.Create(filename)
 	if err != nil {
 		return err
 	}
 
-	out.Close()
-
-	if fileType == "image/png" {
-		err := os.Rename(filename, filename+".png")
-		if err != nil {
-			return err
-		}
-	} else if fileType == "image/jpeg" {
-		err := os.Rename(filename, filename+".jpg")
-		if err != nil {
-			return err
-		}
-	} else if fileType == "text/plain; charset=utf-8" {
-		err := os.Rename(filename, filename+".obj")
-		if err != nil {
-			return nil
-		}
+	_, err = f.Write(b)
+	if err != nil {
+		return err
 	}
 
 	return nil
-}
-
-func getFileContentType(out *os.File) (string, error) {
-	buffer := make([]byte, 512)
-
-	_, err := out.Read(buffer)
-	if err != nil {
-		return "", err
-	}
-
-	contentType := http.DetectContentType(buffer)
-
-	return contentType, nil
 }
