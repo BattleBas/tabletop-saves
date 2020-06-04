@@ -3,10 +3,12 @@ package tts
 import (
 	"archive/zip"
 	"encoding/json"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"os/user"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -26,6 +28,11 @@ func Backup(filename string) error {
 	zipWriter := zip.NewWriter(z)
 	defer zipWriter.Close()
 
+	err = addSaveFile(filename, zipWriter)
+	if err != nil {
+		return err
+	}
+
 	err = downloadImages(s, "Image", zipWriter)
 	if err != nil {
 		return err
@@ -35,18 +42,43 @@ func Backup(filename string) error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
-func readSaveFile(filename string) (SaveFile, error) {
+func getModDir() string {
 	usr, err := user.Current()
 	if err != nil {
-		return SaveFile{}, err
+		return ""
 	}
 	dir := usr.HomeDir
 	windowsPath := "\\Documents\\My Games\\Tabletop Simulator\\Mods\\Workshop\\"
 
-	f, err := os.Open(dir + windowsPath + filename)
+	return dir + windowsPath
+}
+
+func addSaveFile(filename string, zipWriter *zip.Writer) error {
+	dir := getModDir()
+	f, err := os.Open(dir + filename)
+	if err != nil {
+		return err
+	}
+
+	zipF, err := zipWriter.Create(filename)
+
+	_, err = io.Copy(zipF, f)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func readSaveFile(filename string) (SaveFile, error) {
+
+	dir := getModDir()
+
+	f, err := os.Open(dir + filename)
 	if err != nil {
 		return SaveFile{}, err
 	}
@@ -131,7 +163,7 @@ func downloadURLs(urls map[string]bool, rootDir string, zipWriter *zip.Writer) e
 	for k := range urls {
 		filename := reg.ReplaceAllString(k, "")
 
-		err := downloadFile(k, rootDir+"/"+filename, zipWriter)
+		err := downloadFile(k, path.Join(rootDir, filename), zipWriter)
 		if err != nil {
 			return err
 		}
